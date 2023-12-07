@@ -22,6 +22,8 @@ type Info struct {
 	Creator     int             `gorm:"column:creator; type:int(11)" json:"creator" form:"creator"`                           // 创建者
 	Notice      json.RawMessage `gorm:"column:notice; type:json" json:"notice" form:"notice"`                                 // 绑定通知
 	Remarks     string          `gorm:"column:remarks; type:varchar(1024)" json:"remarks" form:"remarks"`                     // 流程备注
+	HowToFix    string          `gorm:"column:how_to_fix; type:varchar(1024)" json:"how_to_fix" form:"how_to_fix"`            // 解决方案和流程说明
+
 }
 
 func (Info) TableName() string {
