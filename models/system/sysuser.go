@@ -48,7 +48,7 @@ type SysUserB struct {
 	NickName string `gorm:"type:varchar(128)" json:"nickName"` // 昵称
 	Phone    string `gorm:"type:varchar(11)" json:"phone"`     // 手机号
 	RoleId   int    `gorm:"type:int(11)" json:"roleId"`        // 角色编码
-	Salt     string `gorm:"type:varchar(255)" json:"salt"`     //盐
+	Salt     string `gorm:"type:varchar(255)" json:"salt"`     //盐，钉钉用户的unionid
 	Avatar   string `gorm:"type:varchar(255)" json:"avatar"`   //头像
 	Sex      string `gorm:"type:varchar(255)" json:"sex"`      //性别
 	Email    string `gorm:"type:varchar(128)" json:"email"`    //邮箱
@@ -90,6 +90,25 @@ type SysUserView struct {
 	SysUserB
 	LoginM
 	RoleName string `gorm:"column:role_name"  json:"role_name"`
+}
+
+// UpsertUser
+func (e *SysUser) UpsertDingtalkUser(userInfo *SysUser) (userid int, err error) {
+	var currentUser *SysUser
+	if err = orm.Eloquent.Table(e.TableName()).Where("salt = ? and userid = ?", userInfo.Salt, userInfo.UserId).First(&currentUser).Error; err != nil {
+		return
+	}
+
+	if currentUser != nil && currentUser.SysUserId.UserId > 0 { // 更新userinfo内容
+
+		// TODO : 如果这里会有产生空值的可能，就改成updates
+		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Where("_id = ?", currentUser.SysUserId.UserId).Save(currentUser)
+		userInfo.SysUserId.UserId = currentUser.SysUserId.UserId
+	} else {
+		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Create(&userInfo)
+	}
+
+	return
 }
 
 // 获取用户数据
@@ -232,7 +251,7 @@ func (e *SysUser) GetPage(pageSize int, pageIndex int) ([]SysUserPage, int, erro
 	return doc, count, nil
 }
 
-//加密
+// 加密
 func (e *SysUser) Encrypt() (err error) {
 	if e.Password == "" {
 		return
@@ -247,7 +266,7 @@ func (e *SysUser) Encrypt() (err error) {
 	}
 }
 
-//添加
+// 添加
 func (e SysUser) Insert() (id int, err error) {
 	if err = e.Encrypt(); err != nil {
 		return
@@ -269,7 +288,7 @@ func (e SysUser) Insert() (id int, err error) {
 	return
 }
 
-//修改
+// 修改
 func (e *SysUser) Update(id int) (update SysUser, err error) {
 	if e.Password != "" {
 		if err = e.Encrypt(); err != nil {

@@ -45,6 +45,7 @@ func sysSwaggerRouter(r *gin.RouterGroup) {
 
 func sysCheckRoleRouterInit(r *gin.RouterGroup, authMiddleware *jwtauth.GinJWTMiddleware) {
 	r.POST("/login", authMiddleware.LoginHandler)
+	r.GET("/dingtalk_login_callback", authMiddleware.DingtalkLoginCallback)
 	// Refresh time can be longer than token timeout
 	r.GET("/refresh_token", authMiddleware.RefreshHandler)
 

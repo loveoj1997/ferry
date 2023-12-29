@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"ferry/global/orm"
+	"ferry/models/dingtalkUser"
 	"ferry/models/system"
 	jwt "ferry/pkg/jwtauth"
 	ldap1 "ferry/pkg/ldap"
@@ -165,6 +166,22 @@ func Authenticator(c *gin.Context) (interface{}, error) {
 	}
 
 	return nil, jwt.ErrFailedAuthentication
+}
+
+func UpsertDingtalkUser(c *gin.Context) (userID int64, err error) {
+	var currentUser *dingtalkUser.UserInfos
+	database.MySqlClient.DB.Model(&UserInfos{}).Where("unionid = ? and userid = ?", userInfo.Unionid, userInfo.Userid).First(&currentUser)
+
+	if currentUser != nil && currentUser.ID > 0 { // 更新userinfo内容
+
+		// TODO : 如果这里会有产生空值的可能，就改成updates
+		database.MySqlClient.DB.Model(&UserInfos{}).Where("_id = ?", currentUser.ID).Save(currentUser)
+		userInfo.ID = currentUser.ID
+	} else {
+		database.MySqlClient.DB.Model(&UserInfos{}).Create(&userInfo)
+	}
+
+	return
 }
 
 // @Summary 退出登录
