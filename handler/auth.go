@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"ferry/global/orm"
 	"ferry/models/dingtalkUser"
@@ -11,14 +12,22 @@ import (
 	"ferry/pkg/settings"
 	"ferry/tools"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/alibabacloud-go/tea/tea"
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mojocn/base64Captcha"
 	"github.com/mssola/user_agent"
+
+	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
+	dingtalkcontact "github.com/alibabacloud-go/dingtalk/contact_1_0"
+	dingtalkoauth "github.com/alibabacloud-go/dingtalk/oauth2_1_0"
+	util "github.com/alibabacloud-go/tea-utils/v2/service"
 )
 
 var store = base64Captcha.DefaultMemStore
@@ -168,20 +177,148 @@ func Authenticator(c *gin.Context) (interface{}, error) {
 	return nil, jwt.ErrFailedAuthentication
 }
 
-func UpsertDingtalkUser(c *gin.Context) (userID int64, err error) {
-	var currentUser *dingtalkUser.UserInfos
-	database.MySqlClient.DB.Model(&UserInfos{}).Where("unionid = ? and userid = ?", userInfo.Unionid, userInfo.Userid).First(&currentUser)
+func CreateOauthClient() (_result *dingtalkoauth.Client, _err error) {
+	config := &openapi.Config{}
+	config.SetProtocol("https")
+	config.SetRegionId("central")
+	config.SetConnectTimeout(30)
+	_result = &dingtalkoauth.Client{}
+	_result, _err = dingtalkoauth.NewClient(config)
+	return _result, _err
+}
 
-	if currentUser != nil && currentUser.ID > 0 { // 更新userinfo内容
+func CreateContactClient() (_result *dingtalkcontact.Client, _err error) {
+	config := &openapi.Config{}
+	config.Protocol = tea.String("https")
+	config.RegionId = tea.String("central")
+	_result = &dingtalkcontact.Client{}
+	_result, _err = dingtalkcontact.NewClient(config)
+	return _result, _err
+}
 
-		// TODO : 如果这里会有产生空值的可能，就改成updates
-		database.MySqlClient.DB.Model(&UserInfos{}).Where("_id = ?", currentUser.ID).Save(currentUser)
-		userInfo.ID = currentUser.ID
-	} else {
-		database.MySqlClient.DB.Model(&UserInfos{}).Create(&userInfo)
+func GetAccessToken(appKey, appSecret, code string) (accessToken *string, err error) {
+	getUserTokenRequest := &dingtalkoauth.GetUserTokenRequest{
+		ClientId:     tea.String(appKey),
+		ClientSecret: tea.String(appSecret),
+		Code:         tea.String(code),
+		GrantType:    tea.String("authorization_code"),
 	}
 
-	return
+	client, _ := CreateOauthClient()
+	resp, err := client.GetUserToken(getUserTokenRequest)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Body.AccessToken != nil {
+		return resp.Body.AccessToken, err
+	} else {
+		return nil, nil
+	}
+}
+
+func GetUserInfoByToken(appKey, appSecret, code string) (resp *dingtalkUser.UserInfoDetailsRsp, err error) {
+	token, err := GetAccessToken(appKey, appSecret, code)
+	if token == nil {
+		return nil, err
+	}
+
+	getUserHeaders := &dingtalkcontact.GetUserHeaders{}
+	getUserHeaders.SetXAcsDingtalkAccessToken(*token)
+	client, _ := CreateContactClient()
+	res, err := client.GetUserWithOptions(tea.String("me"), getUserHeaders, &util.RuntimeOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if res.Body == nil || res.Body.UnionId == nil {
+		return nil, nil
+	}
+
+	unionID := res.Body.UnionId
+	getByUnionUrl := dingtalkUser.GetUserIDByUnionID + "?access_token=" + *token
+
+	payload := &dingtalkUser.GetUserIDByUnionIDReq{
+		Unionid: *unionID,
+	}
+	payloadJson, _ := json.Marshal(payload)
+
+	req, _ := http.NewRequest("POST", getByUnionUrl, strings.NewReader(string(payloadJson)))
+
+	req.Header.Add("Content-Type", "application/json")
+
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(body, resp)
+
+	return resp, err
+}
+
+func DingtalkAuthenticator(c *gin.Context) (interface{}, error) {
+	var (
+		err      error
+		loginVal system.DingtalkLogin
+		loginLog system.LoginLog
+		sysUser  system.SysUser
+	)
+
+	ua := user_agent.New(c.Request.UserAgent())
+	loginLog.Ipaddr = c.ClientIP()
+	location := tools.GetLocation(c.ClientIP())
+	loginLog.LoginLocation = location
+	loginLog.LoginTime = tools.GetCurrntTime()
+	loginLog.Status = "0"
+	loginLog.Remark = c.Request.UserAgent()
+	browserName, browserVersion := ua.Browser()
+	loginLog.Browser = browserName + " " + browserVersion
+	loginLog.Os = ua.OS()
+	loginLog.Msg = "登录成功"
+	loginLog.Platform = ua.Platform()
+
+	// 获取前端过来的数据
+	if err := c.ShouldBindQuery(&loginVal); err != nil {
+		loginLog.Status = "1"
+		loginLog.Msg = "authCode数据解析失败"
+		_, _ = loginLog.Create()
+		return nil, jwt.ErrMissingLoginValues
+	}
+
+	userInfo, err := GetUserInfoByToken("dingjcmk39kdqhrxkxnl", "eFc-yqB0mbpMyLPXEb7ZTtRxUisCqGNzLQrQGxB0bODyScFonZkns1_tfk6-ZgLS", loginVal.AuthCode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"msg": "internal server error ," + err.Error(),
+		})
+		return nil, err
+	}
+	if userInfo == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"msg": "no user info found",
+		})
+		return nil, err
+	}
+
+	loginLog.Username = userInfo.Result.Name
+
+	sysUser, err = sysUser.UpsertDingtalkUser(userInfo)
+	if err == nil {
+		_, _ = loginLog.Create()
+
+		return map[string]interface{}{"user": sysUser, "role": sysUser.RoleId}, nil
+	} else {
+		loginLog.Status = "1"
+		loginLog.Msg = "登录失败"
+		_, _ = loginLog.Create()
+		logger.Info(err.Error())
+	}
+
+	return nil, jwt.ErrFailedAuthentication
 }
 
 // @Summary 退出登录

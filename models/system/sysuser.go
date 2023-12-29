@@ -3,6 +3,7 @@ package system
 import (
 	"errors"
 	"ferry/global/orm"
+	"ferry/models/dingtalkUser"
 	"ferry/pkg/logger"
 	"ferry/tools"
 	"strings"
@@ -13,6 +14,12 @@ import (
 /*
   @Author : lanyulei
 */
+
+const (
+	Role_SysAdmin = 1
+	Role_Normal   = 2
+	Role_test     = 3
+)
 
 // User
 type User struct {
@@ -92,20 +99,45 @@ type SysUserView struct {
 	RoleName string `gorm:"column:role_name"  json:"role_name"`
 }
 
+func userInfoRsp2Dal(userinfodetailrsp *dingtalkUser.UserInfoDetailsRsp) *SysUser {
+	userinfodetail := userinfodetailrsp.Result
+
+	var sysUserInfo *SysUser
+
+	sysUserInfo.SysUserB = SysUserB{
+		NickName: userinfodetail.Userid,
+		Phone:    userinfodetail.Mobile,
+		RoleId:   Role_Normal,
+		Salt:     userinfodetail.Unionid,
+		Avatar:   userinfodetail.Avatar,
+		Email:    userinfodetail.Email,
+	}
+	sysUserInfo.Username = userinfodetail.Name
+
+	return sysUserInfo
+}
+
 // UpsertUser
-func (e *SysUser) UpsertDingtalkUser(userInfo *SysUser) (userid int, err error) {
-	var currentUser *SysUser
-	if err = orm.Eloquent.Table(e.TableName()).Where("salt = ? and userid = ?", userInfo.Salt, userInfo.UserId).First(&currentUser).Error; err != nil {
-		return
+func (e *SysUser) UpsertDingtalkUser(rsp *dingtalkUser.UserInfoDetailsRsp) (userInfo SysUser, err error) {
+
+	rspInfo := userInfoRsp2Dal(rsp)
+
+	if err = orm.Eloquent.Table(e.TableName()).Where("salt = ? and nickName = ?", rspInfo.Salt, rspInfo.UserId).First(&userInfo).Error; err != nil {
+		return userInfo, err
 	}
 
-	if currentUser != nil && currentUser.SysUserId.UserId > 0 { // 更新userinfo内容
+	if userInfo.SysUserId.UserId > 0 { // 更新userinfo内容
+		userInfo.NickName = rspInfo.NickName
+		userInfo.Phone = rspInfo.Phone
+		userInfo.Salt = rspInfo.Salt
+		userInfo.Avatar = rspInfo.Avatar
+		userInfo.Email = rspInfo.Email
 
 		// TODO : 如果这里会有产生空值的可能，就改成updates
-		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Where("_id = ?", currentUser.SysUserId.UserId).Save(currentUser)
-		userInfo.SysUserId.UserId = currentUser.SysUserId.UserId
+		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Where("_id = ?", userInfo.UserId).Save(userInfo)
 	} else {
-		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Create(&userInfo)
+		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Create(&rspInfo)
+		userInfo = *rspInfo
 	}
 
 	return

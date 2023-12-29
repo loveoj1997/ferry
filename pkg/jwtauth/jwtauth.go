@@ -2,21 +2,13 @@ package jwtauth
 
 import (
 	"crypto/rsa"
-	"encoding/json"
 	"errors"
-	"ferry/models/dingtalkUser"
 	config2 "ferry/tools/config"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
 
-	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
-	dingtalkcontact "github.com/alibabacloud-go/dingtalk/contact_1_0"
-	dingtalkoauth "github.com/alibabacloud-go/dingtalk/oauth2_1_0"
-	util "github.com/alibabacloud-go/tea-utils/v2/service"
-	"github.com/alibabacloud-go/tea/tea"
 	"github.com/fatih/structs"
 
 	"github.com/gin-gonic/gin"
@@ -54,6 +46,8 @@ type GinJWTMiddleware struct {
 	// Must return user data as user identifier, it will be stored in Claim Array. Required.
 	// Check error (e) to determine the appropriate error message.
 	Authenticator func(c *gin.Context) (interface{}, error)
+
+	DingtalkAuthenticator func(c *gin.Context) (interface{}, error)
 
 	// Callback function that should perform the authorization of the authenticated user. Called
 	// only after an authentication success. Must return true on success, false on failure.
@@ -510,35 +504,17 @@ type GetUserAccessTokenReq struct {
 // DingtalkLoginCallback is a callback router for Dingtalk QRCode/Account login. For Prod Env,
 // User will use this way to login.
 func (mw *GinJWTMiddleware) DingtalkLoginCallback(c *gin.Context) {
-	var req *LoginCallbackReq
-	if err := c.BindQuery(req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"msg": "request query error ," + err.Error(),
-		})
-		return
-	}
 
-	userInfo, err := GetUserInfoByToken("dingjcmk39kdqhrxkxnl", "eFc-yqB0mbpMyLPXEb7ZTtRxUisCqGNzLQrQGxB0bODyScFonZkns1_tfk6-ZgLS", req.AuthCode)
+	userInfo, err := mw.DingtalkAuthenticator(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"msg": "internal server error ," + err.Error(),
-		})
 		return
 	}
-	if userInfo == nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"msg": "no user info found",
-		})
-		return
-	}
-
-	userInfoDal := userInfoRsp2Dal(userInfo)
 
 	// Create the token
 	token := jwt.New(jwt.GetSigningMethod(mw.SigningAlgorithm))
 	claims := token.Claims.(jwt.MapClaims)
 
-	for key, value := range structs.Map(userInfoDal) {
+	for key, value := range structs.Map(userInfo) {
 		claims[key] = value
 	}
 
@@ -565,110 +541,6 @@ func (mw *GinJWTMiddleware) DingtalkLoginCallback(c *gin.Context) {
 		)
 	}
 
-}
-
-func CreateOauthClient() (_result *dingtalkoauth.Client, _err error) {
-	config := &openapi.Config{}
-	config.SetProtocol("https")
-	config.SetRegionId("central")
-	config.SetConnectTimeout(30)
-	_result = &dingtalkoauth.Client{}
-	_result, _err = dingtalkoauth.NewClient(config)
-	return _result, _err
-}
-
-func CreateContactClient() (_result *dingtalkcontact.Client, _err error) {
-	config := &openapi.Config{}
-	config.Protocol = tea.String("https")
-	config.RegionId = tea.String("central")
-	_result = &dingtalkcontact.Client{}
-	_result, _err = dingtalkcontact.NewClient(config)
-	return _result, _err
-}
-
-func GetAccessToken(appKey, appSecret, code string) (accessToken *string, err error) {
-	getUserTokenRequest := &dingtalkoauth.GetUserTokenRequest{
-		ClientId:     tea.String(appKey),
-		ClientSecret: tea.String(appSecret),
-		Code:         tea.String(code),
-		GrantType:    tea.String("authorization_code"),
-	}
-
-	client, _ := CreateOauthClient()
-	resp, err := client.GetUserToken(getUserTokenRequest)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Body.AccessToken != nil {
-		return resp.Body.AccessToken, err
-	} else {
-		return nil, nil
-	}
-}
-
-func GetUserInfoByToken(appKey, appSecret, code string) (resp *dingtalkUser.UserInfoDetailsRsp, err error) {
-	token, err := GetAccessToken(appKey, appSecret, code)
-	if token == nil {
-		return nil, err
-	}
-
-	getUserHeaders := &dingtalkcontact.GetUserHeaders{}
-	getUserHeaders.SetXAcsDingtalkAccessToken(*token)
-	client, _ := CreateContactClient()
-	res, err := client.GetUserWithOptions(tea.String("me"), getUserHeaders, &util.RuntimeOptions{})
-	if err != nil {
-		return nil, err
-	}
-	if res.Body == nil || res.Body.UnionId == nil {
-		return nil, nil
-	}
-
-	unionID := res.Body.UnionId
-	getByUnionUrl := dingtalkUser.GetUserIDByUnionID + "?access_token=" + *token
-
-	payload := &dingtalkUser.GetUserIDByUnionIDReq{
-		Unionid: *unionID,
-	}
-	payloadJson, _ := json.Marshal(payload)
-
-	req, _ := http.NewRequest("POST", getByUnionUrl, strings.NewReader(string(payloadJson)))
-
-	req.Header.Add("Content-Type", "application/json")
-
-	response, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(body, resp)
-
-	return resp, err
-}
-
-func userInfoRsp2Dal(userinfodetailrsp *dingtalkUser.UserInfoDetailsRsp) *dingtalkUser.UserInfos {
-	userinfodetail := userinfodetailrsp.Result
-	return &dingtalkUser.UserInfos{
-		Unionid:          userinfodetail.Unionid,
-		Boss:             userinfodetail.Boss,
-		ExclusiveAccount: userinfodetail.ExclusiveAccount,
-		ManagerUserid:    userinfodetail.ManagerUserid,
-		Admin:            userinfodetail.Admin,
-		Title:            userinfodetail.Title,
-		Userid:           userinfodetail.Userid,
-		JobNumber:        userinfodetail.JobNumber,
-		Email:            userinfodetail.Email,
-		Mobile:           userinfodetail.Mobile,
-		Active:           userinfodetail.Active,
-		Senior:           userinfodetail.Senior,
-		Name:             userinfodetail.Name,
-		StateCode:        userinfodetail.StateCode,
-	}
 }
 
 func (mw *GinJWTMiddleware) signedString(token *jwt.Token) (string, error) {
