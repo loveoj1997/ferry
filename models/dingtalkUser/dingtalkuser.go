@@ -38,68 +38,43 @@ type Result struct {
 	Userid_list []string `json:"userid_list"`
 }
 
-const GetUserIDByUnionID = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
+const (
+	GetUserIDByUnionID = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
+	GetUserInfoByDept  = "https://oapi.dingtalk.com/topapi/v2/user/list"
+)
 
 type GetUserIDByUnionIDReq struct {
 	Unionid string `json:"unionid"`
 }
 
-type GetUserIDByUnionIDRsp struct {
+type GetUserListByDeptReq struct {
+	Cursor             int  `json:"cursor"`
+	ContainAccessLimit bool `json:"contain_access_limit"`
+	Size               int  `json:"size"`
+	DeptID             int  `json:"dept_id"`
+}
+
+type UserInfo struct {
+	Unionid string `json:"unionid"`
+	Userid  string `json:"userid"`
+	Email   string `json:"email"`
+	Mobile  string `json:"mobile"`
+	Name    string `json:"name"`
+}
+type GetUserListByDeptResp struct {
 	Errcode string `json:"errcode"`
-	Errmsg  string `json:"errmsg"`
 	Result  struct {
-		ContactType int    `json:"contact_type"`
-		Userid      string `json:"userid"`
+		NextCursor string     `json:"next_cursor"`
+		HasMore    string     `json:"has_more"`
+		List       []UserInfo `json:"list"`
 	} `json:"result"`
-	RequestID string `json:"request_id"`
+	Errmsg string `json:"errmsg"`
 }
 
-const GetUserDetails = "https://oapi.dingtalk.com/topapi/v2/user/get"
-
-type UserInfoDetailsRsp struct {
-	Errcode string                `json:"errcode"`
-	Result  UserInfoDetailsResult `json:"result"`
-	Errmsg  string                `json:"errmsg"`
-}
-type RoleList struct {
-	GroupName string `json:"group_name"`
-	Name      string `json:"name"`
-	ID        string `json:"id"`
-}
-
-type LeaderInDept struct {
-	Leader string `json:"leader"`
-	DeptID string `json:"dept_id"`
-}
-type UnionEmpMapList struct {
-	Userid string `json:"userid"`
-	CorpID string `json:"corp_id"`
-}
-type UnionEmpExt struct {
-	UnionEmpMapList UnionEmpMapList `json:"union_emp_map_list"`
-	Userid          string          `json:"userid"`
-	CorpID          string          `json:"corp_id"`
-}
-type UserInfoDetailsResult struct {
-	Unionid          string       `json:"unionid"`
-	Boss             bool         `json:"boss"`
-	RoleList         RoleList     `json:"role_list"`
-	ExclusiveAccount bool         `json:"exclusive_account"`
-	ManagerUserid    string       `json:"manager_userid"`
-	Admin            bool         `json:"admin"`
-	Title            string       `json:"title"`
-	Userid           string       `json:"userid"`
-	DeptIDList       []int64      `json:"dept_id_list"`
-	JobNumber        string       `json:"job_number"`
-	Email            string       `json:"email"`
-	LeaderInDept     LeaderInDept `json:"leader_in_dept"`
-	Mobile           string       `json:"mobile"`
-	Active           string       `json:"active"`
-	OrgEmail         string       `json:"org_email"`
-	Avatar           string       `json:"avatar"`
-	Senior           bool         `json:"senior"`
-	Name             string       `json:"name"`
-	StateCode        string       `json:"state_code"`
+type GetUserIDByUnionIDRsp struct {
+	Result struct {
+		Userid string `json:"userid"`
+	} `json:"result"`
 }
 
 func (e *UserInfos) UpsertUser(id int) (userInfo *UserInfos, err error) {

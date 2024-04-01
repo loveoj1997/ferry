@@ -358,6 +358,8 @@ CREATE TABLE `sys_settings` (
 DROP TABLE IF EXISTS `sys_user`;
 CREATE TABLE `sys_user` (
   `user_id` int NOT NULL AUTO_INCREMENT,
+  `dingtalk_user_id` varchar(255) DEFAULT NULL,
+  `unionid` varchar(255) DEFAULT NULL,
   `nick_name` varchar(128) DEFAULT NULL,
   `phone` varchar(11) DEFAULT NULL,
   `role_id` int DEFAULT NULL,

@@ -3,13 +3,12 @@ package jwtauth
 import (
 	"crypto/rsa"
 	"errors"
+	"ferry/pkg/logger"
 	config2 "ferry/tools/config"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/fatih/structs"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
@@ -48,6 +47,8 @@ type GinJWTMiddleware struct {
 	Authenticator func(c *gin.Context) (interface{}, error)
 
 	DingtalkAuthenticator func(c *gin.Context) (interface{}, error)
+
+	DingtalkFetchUsers func(c *gin.Context) (interface{}, error)
 
 	// Callback function that should perform the authorization of the authenticated user. Called
 	// only after an authentication success. Must return true on success, false on failure.
@@ -505,7 +506,7 @@ type GetUserAccessTokenReq struct {
 // User will use this way to login.
 func (mw *GinJWTMiddleware) DingtalkLoginCallback(c *gin.Context) {
 
-	userInfo, err := mw.DingtalkAuthenticator(c)
+	data, err := mw.DingtalkAuthenticator(c)
 	if err != nil {
 		return
 	}
@@ -514,11 +515,12 @@ func (mw *GinJWTMiddleware) DingtalkLoginCallback(c *gin.Context) {
 	token := jwt.New(jwt.GetSigningMethod(mw.SigningAlgorithm))
 	claims := token.Claims.(jwt.MapClaims)
 
-	for key, value := range structs.Map(userInfo) {
+	for key, value := range mw.PayloadFunc(data) {
 		claims[key] = value
 	}
 
 	expire := mw.TimeFunc().Add(mw.Timeout)
+	logger.Info("timeout is : ", expire.Unix())
 	claims["exp"] = expire.Unix()
 	claims["orig_iat"] = mw.TimeFunc().Unix()
 	tokenString, err := mw.signedString(token)
@@ -528,19 +530,27 @@ func (mw *GinJWTMiddleware) DingtalkLoginCallback(c *gin.Context) {
 		return
 	}
 	// set cookie
-	if mw.SendCookie {
-		maxage := int(expire.Unix() - time.Now().Unix())
-		c.SetCookie(
-			mw.CookieName,
-			tokenString,
-			maxage,
-			"/",
-			mw.CookieDomain,
-			mw.SecureCookie,
-			mw.CookieHTTPOnly,
-		)
+	maxAge := int(expire.Unix() - time.Now().Unix())
+	c.SetCookie(
+		mw.CookieName,
+		tokenString,
+		maxAge,
+		"/",
+		mw.CookieDomain,
+		mw.SecureCookie,
+		mw.CookieHTTPOnly,
+	)
+
+	c.Redirect(302, "http://localhost:9527/dashboard")
+}
+
+func (mw *GinJWTMiddleware) FetchDingTalkUsers(c *gin.Context) {
+	data, err := mw.DingtalkFetchUsers(c)
+	if err != nil {
+		return
 	}
 
+	c.JSON(http.StatusOK, data)
 }
 
 func (mw *GinJWTMiddleware) signedString(token *jwt.Token) (string, error) {

@@ -48,6 +48,7 @@ func sysCheckRoleRouterInit(r *gin.RouterGroup, authMiddleware *jwtauth.GinJWTMi
 	r.GET("/dingtalk_login_callback", authMiddleware.DingtalkLoginCallback)
 	// Refresh time can be longer than token timeout
 	r.GET("/refresh_token", authMiddleware.RefreshHandler)
+	r.GET("/fetch_dingtalk_users", authMiddleware.FetchDingTalkUsers)
 
 	v1 := r.Group("/api/v1")
 

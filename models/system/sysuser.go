@@ -7,6 +7,7 @@ import (
 	"ferry/pkg/logger"
 	"ferry/tools"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -52,20 +53,22 @@ type SysUserId struct {
 }
 
 type SysUserB struct {
-	NickName string `gorm:"type:varchar(128)" json:"nickName"` // 昵称
-	Phone    string `gorm:"type:varchar(11)" json:"phone"`     // 手机号
-	RoleId   int    `gorm:"type:int(11)" json:"roleId"`        // 角色编码
-	Salt     string `gorm:"type:varchar(255)" json:"salt"`     //盐，钉钉用户的unionid
-	Avatar   string `gorm:"type:varchar(255)" json:"avatar"`   //头像
-	Sex      string `gorm:"type:varchar(255)" json:"sex"`      //性别
-	Email    string `gorm:"type:varchar(128)" json:"email"`    //邮箱
-	DeptId   int    `gorm:"type:int(11)" json:"deptId"`        //部门编码
-	PostId   int    `gorm:"type:int(11)" json:"postId"`        //职位编码
-	CreateBy string `gorm:"type:varchar(128)" json:"createBy"` //
-	UpdateBy string `gorm:"type:varchar(128)" json:"updateBy"` //
-	Remark   string `gorm:"type:varchar(255)" json:"remark"`   //备注
-	Status   string `gorm:"type:int(1);" json:"status"`
-	Params   string `gorm:"-" json:"params"`
+	NickName       string `gorm:"type:varchar(128)" json:"nickName"`       // 昵称
+	DingtalkUserID string `gorm:"type:varchar(255)" json:"dingtalkUserID"` // 钉钉，userid
+	UnionID        string `gorm:"type:varchar(255)" json:"unionid"`        // 钉钉，unionid
+	Phone          string `gorm:"type:varchar(11)" json:"phone"`           // 手机号
+	RoleId         int    `gorm:"type:int(11)" json:"roleId"`              // 角色编码
+	Salt           string `gorm:"type:varchar(255)" json:"salt"`           //盐
+	Avatar         string `gorm:"type:varchar(255)" json:"avatar"`         //头像
+	Sex            string `gorm:"type:varchar(255)" json:"sex"`            //性别
+	Email          string `gorm:"type:varchar(128)" json:"email"`          //邮箱
+	DeptId         int    `gorm:"type:int(11)" json:"deptId"`              //部门编码
+	PostId         int    `gorm:"type:int(11)" json:"postId"`              //职位编码
+	CreateBy       string `gorm:"type:varchar(128)" json:"createBy"`       //
+	UpdateBy       string `gorm:"type:varchar(128)" json:"updateBy"`       //
+	Remark         string `gorm:"type:varchar(255)" json:"remark"`         //备注
+	Status         string `gorm:"type:int(1);" json:"status"`
+	Params         string `gorm:"-" json:"params"`
 	BaseModel
 }
 
@@ -99,48 +102,58 @@ type SysUserView struct {
 	RoleName string `gorm:"column:role_name"  json:"role_name"`
 }
 
-func userInfoRsp2Dal(userinfodetailrsp *dingtalkUser.UserInfoDetailsRsp) *SysUser {
-	userinfodetail := userinfodetailrsp.Result
-
-	var sysUserInfo *SysUser
+func userInfoRsp2Dal(userinfodetail *dingtalkUser.UserInfos) *SysUser {
+	sysUserInfo := new(SysUser)
 
 	sysUserInfo.SysUserB = SysUserB{
-		NickName: userinfodetail.Userid,
-		Phone:    userinfodetail.Mobile,
-		RoleId:   Role_Normal,
-		Salt:     userinfodetail.Unionid,
-		Avatar:   userinfodetail.Avatar,
-		Email:    userinfodetail.Email,
+		NickName:       userinfodetail.Name,
+		Phone:          userinfodetail.Mobile,
+		RoleId:         Role_SysAdmin,
+		UnionID:        userinfodetail.Unionid,
+		DingtalkUserID: userinfodetail.Userid,
+		Avatar:         userinfodetail.Avatar,
+		Email:          userinfodetail.Email,
+		Status:         "0",
 	}
 	sysUserInfo.Username = userinfodetail.Name
 
 	return sysUserInfo
 }
 
-// UpsertUser
-func (e *SysUser) UpsertDingtalkUser(rsp *dingtalkUser.UserInfoDetailsRsp) (userInfo SysUser, err error) {
+// UpsertDingtalkUser
+func (e *SysUser) UpsertDingtalkUser(rsp *dingtalkUser.UserInfos) (userInfo SysUser, role SysRole, err error) {
 
 	rspInfo := userInfoRsp2Dal(rsp)
 
-	if err = orm.Eloquent.Table(e.TableName()).Where("salt = ? and nickName = ?", rspInfo.Salt, rspInfo.UserId).First(&userInfo).Error; err != nil {
-		return userInfo, err
+	if err = orm.Eloquent.Table(e.TableName()).Where("union_id = ? and dingtalk_user_id = ?", rspInfo.UnionID, rspInfo.DingtalkUserID).First(&userInfo).Error; err != nil {
+		logger.Info("is other err :", !orm.Eloquent.RecordNotFound())
+		if err.Error() != "record not found" {
+			return userInfo, role, err
+		}
 	}
 
-	if userInfo.SysUserId.UserId > 0 { // 更新userinfo内容
+	logger.Info("continue")
+	if userInfo.UserId > 0 { // 更新userinfo内容
 		userInfo.NickName = rspInfo.NickName
 		userInfo.Phone = rspInfo.Phone
-		userInfo.Salt = rspInfo.Salt
 		userInfo.Avatar = rspInfo.Avatar
 		userInfo.Email = rspInfo.Email
+		userInfo.UpdatedAt = time.Now()
 
 		// TODO : 如果这里会有产生空值的可能，就改成updates
-		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Where("_id = ?", userInfo.UserId).Save(userInfo)
+		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Where("user_id = ?", userInfo.UserId).Update(userInfo)
 	} else {
+		logger.Info("start to create : ", *rspInfo)
 		orm.Eloquent.Table(e.TableName()).Model(&SysUser{}).Create(&rspInfo)
 		userInfo = *rspInfo
 	}
 
-	return
+	err = orm.Eloquent.Table("sys_role").Where("role_id = ? ", userInfo.RoleId).First(&role).Error
+	if err != nil {
+		return
+	}
+
+	return userInfo, role, nil
 }
 
 // 获取用户数据

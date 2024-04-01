@@ -27,7 +27,7 @@ import (
 	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
 	dingtalkcontact "github.com/alibabacloud-go/dingtalk/contact_1_0"
 	dingtalkoauth "github.com/alibabacloud-go/dingtalk/oauth2_1_0"
-	util "github.com/alibabacloud-go/tea-utils/v2/service"
+	teaUtil "github.com/alibabacloud-go/tea-utils/v2/service"
 )
 
 var store = base64Captcha.DefaultMemStore
@@ -196,16 +196,14 @@ func CreateContactClient() (_result *dingtalkcontact.Client, _err error) {
 	return _result, _err
 }
 
-func GetAccessToken(appKey, appSecret, code string) (accessToken *string, err error) {
-	getUserTokenRequest := &dingtalkoauth.GetUserTokenRequest{
-		ClientId:     tea.String(appKey),
-		ClientSecret: tea.String(appSecret),
-		Code:         tea.String(code),
-		GrantType:    tea.String("authorization_code"),
+func GetAccessToken(appKey, appSecret string) (accessToken *string, err error) {
+	getAccessTokenRequest := &dingtalkoauth.GetAccessTokenRequest{
+		AppKey:    tea.String(appKey),
+		AppSecret: tea.String(appSecret),
 	}
 
 	client, _ := CreateOauthClient()
-	resp, err := client.GetUserToken(getUserTokenRequest)
+	resp, err := client.GetAccessToken(getAccessTokenRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -216,28 +214,53 @@ func GetAccessToken(appKey, appSecret, code string) (accessToken *string, err er
 	}
 }
 
-func GetUserInfoByToken(appKey, appSecret, code string) (resp *dingtalkUser.UserInfoDetailsRsp, err error) {
-	token, err := GetAccessToken(appKey, appSecret, code)
-	if token == nil {
-		return nil, err
+func GetUserAccessToken(appKey, appSecret, code string) (respBody *dingtalkoauth.GetUserTokenResponseBody, err error) {
+	logger.Info("app key is :", appKey)
+	logger.Info("app sec is :", appSecret)
+	logger.Info("code is :", code)
+	getUserTokenReq := &dingtalkoauth.GetUserTokenRequest{
+		ClientId:     tea.String(appKey),
+		ClientSecret: tea.String(appSecret),
+		Code:         tea.String(code),
+		GrantType:    tea.String("authorization_code"),
 	}
 
-	getUserHeaders := &dingtalkcontact.GetUserHeaders{}
-	getUserHeaders.SetXAcsDingtalkAccessToken(*token)
-	client, _ := CreateContactClient()
-	res, err := client.GetUserWithOptions(tea.String("me"), getUserHeaders, &util.RuntimeOptions{})
+	client, _ := CreateOauthClient()
+	resp, err := client.GetUserToken(getUserTokenReq)
 	if err != nil {
 		return nil, err
 	}
-	if res.Body == nil || res.Body.UnionId == nil {
+	if resp.Body != nil {
+		return resp.Body, err
+	} else {
 		return nil, nil
 	}
+}
 
-	unionID := res.Body.UnionId
-	getByUnionUrl := dingtalkUser.GetUserIDByUnionID + "?access_token=" + *token
+func GetUserInfoByToken(userAccessToken *string) (respBody *dingtalkcontact.GetUserResponseBody, err error) {
+	logger.Info("user token is :", *userAccessToken)
+	getUserHeaders := &dingtalkcontact.GetUserHeaders{}
+	getUserHeaders.XAcsDingtalkAccessToken = userAccessToken
+	client, _ := CreateContactClient()
+
+	resp, err := client.GetUserWithOptions(tea.String("me"), getUserHeaders, &teaUtil.RuntimeOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Body != nil {
+		return resp.Body, err
+	} else {
+		return nil, nil
+	}
+}
+
+func GetUserIDByUnionID(appAccessToken, unionID string) (userID *string, err error) {
+	logger.Info("unionID  is :", unionID)
+
+	getByUnionUrl := dingtalkUser.GetUserIDByUnionID + "?access_token=" + appAccessToken
 
 	payload := &dingtalkUser.GetUserIDByUnionIDReq{
-		Unionid: *unionID,
+		Unionid: unionID,
 	}
 	payloadJson, _ := json.Marshal(payload)
 
@@ -256,9 +279,138 @@ func GetUserInfoByToken(appKey, appSecret, code string) (resp *dingtalkUser.User
 		return nil, err
 	}
 
+	resp := new(dingtalkUser.GetUserIDByUnionIDRsp)
 	err = json.Unmarshal(body, resp)
+	if err != nil {
+		return nil, err
+	}
 
-	return resp, err
+	return &resp.Result.Userid, nil
+}
+
+func GetUserByDept(appAccessToken string) (userInfoList []dingtalkUser.UserInfo, err error) {
+	getByUnionUrl := dingtalkUser.GetUserInfoByDept + "?access_token=" + appAccessToken
+
+	payload := &dingtalkUser.GetUserListByDeptReq{
+		Cursor:             0,
+		Size:               100,
+		ContainAccessLimit: true,
+	}
+
+	userInfoList = make([]dingtalkUser.UserInfo, 0)
+
+	for _, d := range deptList {
+		payload.DeptID = d
+		payloadJson, _ := json.Marshal(payload)
+
+		req, _ := http.NewRequest("POST", getByUnionUrl, strings.NewReader(string(payloadJson)))
+
+		req.Header.Add("Content-Type", "application/json")
+
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		resp := new(dingtalkUser.GetUserListByDeptResp)
+		err = json.Unmarshal(body, resp)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, u := range resp.Result.List {
+			userInfoList = append(userInfoList, u)
+		}
+	}
+
+	return userInfoList, nil
+}
+
+func GetUserDal(appKey, appSecret, code string) (userDetail *dingtalkUser.UserInfos, err error) {
+	userTokenBody, err := GetUserAccessToken(appKey, appSecret, code)
+	if err != nil {
+		return nil, err
+	}
+	userInfo, err := GetUserInfoByToken(userTokenBody.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	appAccessToken, err := GetAccessToken(appKey, appSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	userID, err := GetUserIDByUnionID(*appAccessToken, *userInfo.UnionId)
+	if err != nil {
+		return nil, err
+	}
+
+	userDetail = &dingtalkUser.UserInfos{}
+
+	if userInfo.UnionId != nil {
+		userDetail.Unionid = *userInfo.UnionId
+	}
+	if userID != nil {
+		userDetail.Userid = *userID
+	}
+	if userInfo.Email != nil {
+		userDetail.Email = *userInfo.Email
+	}
+	if userInfo.UnionId != nil {
+		userDetail.Mobile = *userInfo.Mobile
+	}
+	if userInfo.AvatarUrl != nil {
+		userDetail.Avatar = *userInfo.AvatarUrl
+	}
+	if userInfo.Nick != nil {
+		userDetail.Name = *userInfo.Nick
+	}
+
+	return userDetail, nil
+}
+
+func FetchUser(appKey, appSecret string) (interface{}, error) {
+	appAccessToken, err := GetAccessToken(appKey, appSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	userInfos, err := GetUserByDept(*appAccessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	usersDetail := make([]dingtalkUser.UserInfos, 0)
+	for _, userInfo := range userInfos {
+		var userDetail dingtalkUser.UserInfos
+
+		if userInfo.Unionid != "" {
+			userDetail.Unionid = userInfo.Unionid
+		}
+		if userInfo.Userid != "" {
+			userDetail.Userid = userInfo.Userid
+		}
+		if userInfo.Email != "" {
+			userDetail.Email = userInfo.Email
+		}
+		if userInfo.Name != "" {
+			userDetail.Name = userInfo.Name
+		}
+		if userInfo.Mobile != "" {
+			userDetail.Mobile = userInfo.Mobile
+		}
+
+		usersDetail = append(usersDetail, userDetail)
+	}
+
+	return usersDetail, nil
 }
 
 func DingtalkAuthenticator(c *gin.Context) (interface{}, error) {
@@ -267,6 +419,7 @@ func DingtalkAuthenticator(c *gin.Context) (interface{}, error) {
 		loginVal system.DingtalkLogin
 		loginLog system.LoginLog
 		sysUser  system.SysUser
+		sysRole  system.SysRole
 	)
 
 	ua := user_agent.New(c.Request.UserAgent())
@@ -290,7 +443,7 @@ func DingtalkAuthenticator(c *gin.Context) (interface{}, error) {
 		return nil, jwt.ErrMissingLoginValues
 	}
 
-	userInfo, err := GetUserInfoByToken("dingjcmk39kdqhrxkxnl", "eFc-yqB0mbpMyLPXEb7ZTtRxUisCqGNzLQrQGxB0bODyScFonZkns1_tfk6-ZgLS", loginVal.AuthCode)
+	userInfo, err := GetUserDal("dingqqx81mjesm5lqmgx", "HE-F4i46VLTunrahg_6jj48POm3MFG5GrSrjIshaM-uBh1Pknd7_Ua_KhjGkgE3X", loginVal.AuthCode)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"msg": "internal server error ," + err.Error(),
@@ -304,13 +457,13 @@ func DingtalkAuthenticator(c *gin.Context) (interface{}, error) {
 		return nil, err
 	}
 
-	loginLog.Username = userInfo.Result.Name
+	loginLog.Username = userInfo.Name
 
-	sysUser, err = sysUser.UpsertDingtalkUser(userInfo)
+	sysUser, sysRole, err = sysUser.UpsertDingtalkUser(userInfo)
 	if err == nil {
 		_, _ = loginLog.Create()
 
-		return map[string]interface{}{"user": sysUser, "role": sysUser.RoleId}, nil
+		return map[string]interface{}{"user": sysUser, "role": sysRole}, nil
 	} else {
 		loginLog.Status = "1"
 		loginLog.Msg = "登录失败"
@@ -319,6 +472,75 @@ func DingtalkAuthenticator(c *gin.Context) (interface{}, error) {
 	}
 
 	return nil, jwt.ErrFailedAuthentication
+}
+
+const (
+	botKey = "dingqqx81mjesm5lqmgx"
+	botSec = "HE-F4i46VLTunrahg_6jj48POm3MFG5GrSrjIshaM-uBh1Pknd7_Ua_KhjGkgE3X"
+
+	// 钉钉部门ID，常数，部门结构未发生变化的情况下勿动。
+	rootDept       = 1
+	commerceDept   = 7825695   // 商务部
+	deputyGM       = 7826896   // 副总
+	designDept     = 7827632   // 设计部
+	systemDept     = 7832641   // 系统集成部
+	financeDept    = 7840056   // 财务部
+	officeDept     = 7843002   // 办公室
+	generalManager = 8085621   // 总经理
+	operationDept  = 8102954   // 运行维护
+	szjyOP         = 12416580  // 深州监狱
+	tcjcOP         = 354309639 // 桃城区检察院
+	hszyOP         = 458005469 // 衡水中院
+	wqOP           = 458286033 // 武强
+	jxOP           = 458567160 // 景县
+	fcOP           = 458852104 // 阜城
+	ryOP           = 459026129 // 饶阳
+	zqOP           = 499188422 // 枣强
+	hsgaOP         = 503979491 // 衡水公安
+	apOP           = 657239207 // 安平
+	tcfyOP         = 908491341 // 桃城区法院
+	hsswOP         = 908793080 // 衡水市委
+	whgOP          = 908845086 // 衡水文化宫
+	hsjcOP         = 913175227 // 衡水市检察院
+	digitizingDept = 33582037  // 数字化部
+	digitTempDept  = 408433229 // 数字化部临时
+	businessDept   = 68840530  // 业务部
+	chiefEngineer  = 95484111  // 总工程师
+	director       = 661205352 // 总监理工程师
+	deputyChief    = 664673055 // 常务副总经理
+)
+
+var deptList = [...]int{rootDept, commerceDept, deputyGM, designDept, systemDept, financeDept, officeDept,
+	generalManager, operationDept, szjyOP, tcjcOP, hszyOP, wqOP, jxOP, fcOP, ryOP, zqOP, hsgaOP, apOP,
+	tcfyOP, hsswOP, whgOP, hsjcOP, digitizingDept, digitTempDept, businessDept,
+	chiefEngineer, director, deputyChief}
+
+func DingtalkFetchUsers(c *gin.Context) (interface{}, error) {
+	var (
+		err      error
+		loginVal system.DingtalkLogin
+	)
+
+	// 获取前端过来的数据
+	if err := c.ShouldBindQuery(&loginVal); err != nil {
+		return nil, jwt.ErrMissingLoginValues
+	}
+
+	userInfos, err := FetchUser(botKey, botSec)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"msg": "internal server error ," + err.Error(),
+		})
+		return nil, err
+	}
+	if userInfos == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"msg": "no user info found",
+		})
+		return nil, err
+	}
+
+	return userInfos, nil
 }
 
 // @Summary 退出登录
