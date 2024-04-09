@@ -288,7 +288,7 @@ func GetUserIDByUnionID(appAccessToken, unionID string) (userID *string, err err
 	return &resp.Result.Userid, nil
 }
 
-func GetUserByDept(appAccessToken string) (userInfoList []dingtalkUser.UserInfo, err error) {
+func GetUserByDept(appAccessToken string) (userInfoList []dingtalkUser.DingtalkUserInfo, err error) {
 	getByUnionUrl := dingtalkUser.GetUserInfoByDept + "?access_token=" + appAccessToken
 
 	payload := &dingtalkUser.GetUserListByDeptReq{
@@ -297,7 +297,7 @@ func GetUserByDept(appAccessToken string) (userInfoList []dingtalkUser.UserInfo,
 		ContainAccessLimit: true,
 	}
 
-	userInfoList = make([]dingtalkUser.UserInfo, 0)
+	userInfoList = make([]dingtalkUser.DingtalkUserInfo, 0)
 
 	for _, d := range deptList {
 		payload.DeptID = d
@@ -376,7 +376,7 @@ func GetUserDal(appKey, appSecret, code string) (userDetail *dingtalkUser.UserIn
 	return userDetail, nil
 }
 
-func FetchUser(appKey, appSecret string) (interface{}, error) {
+func FetchUser(appKey, appSecret string) ([]dingtalkUser.DingtalkUserInfo, error) {
 	appAccessToken, err := GetAccessToken(appKey, appSecret)
 	if err != nil {
 		return nil, err
@@ -387,9 +387,9 @@ func FetchUser(appKey, appSecret string) (interface{}, error) {
 		return nil, err
 	}
 
-	usersDetail := make([]dingtalkUser.UserInfos, 0)
+	usersDetail := make([]dingtalkUser.DingtalkUserInfo, 0)
 	for _, userInfo := range userInfos {
-		var userDetail dingtalkUser.UserInfos
+		var userDetail dingtalkUser.DingtalkUserInfo
 
 		if userInfo.Unionid != "" {
 			userDetail.Unionid = userInfo.Unionid
@@ -515,32 +515,120 @@ var deptList = [...]int{rootDept, commerceDept, deputyGM, designDept, systemDept
 	tcfyOP, hsswOP, whgOP, hsjcOP, digitizingDept, digitTempDept, businessDept,
 	chiefEngineer, director, deputyChief}
 
-func DingtalkFetchUsers(c *gin.Context) (interface{}, error) {
-	var (
-		err      error
-		loginVal system.DingtalkLogin
-	)
+const (
+	nocobaseAuth       = "http://localhost:13000/api/auth:signIn"
+	nocobaseUserCreate = "http://localhost:13000/api/users:create"
+	nocobaseUserList   = "http://localhost:13000/api/users:list"
+)
 
-	// 获取前端过来的数据
-	if err := c.ShouldBindQuery(&loginVal); err != nil {
-		return nil, jwt.ErrMissingLoginValues
-	}
+type nocobaseAuthReq struct {
+	Account  string `json:"account"`
+	Password string `json:"password"`
+}
+
+type nocobaseAuthResp struct {
+	Data struct {
+		Token string `json:"token"`
+	} `json:"data"`
+}
+
+type nocobaseUserInfo struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Phone    string `json:"phone"`
+	Nickname string `json:"nickname"`
+	Userid   string `json:"userid"`
+	Name     string `json:"name"`
+	Unionid  string `json:"unionid"`
+	Password string `json:"password"`
+}
+
+//type nocobaseUserListResp struct {
+//	Data []nocobaseUserInfo `json:"data"`
+//	Meta Meta               `json:"meta"`
+//}
+//
+
+//type Meta struct {
+//	Count     int `json:"count"`
+//	Page      int `json:"page"`
+//	PageSize  int `json:"pageSize"`
+//	TotalPage int `json:"totalPage"`
+//}
+
+func DingtalkCreateUsers(c *gin.Context) error {
+	var (
+		err error
+	)
 
 	userInfos, err := FetchUser(botKey, botSec)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"msg": "internal server error ," + err.Error(),
 		})
-		return nil, err
+		return err
 	}
 	if userInfos == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"msg": "no user info found",
 		})
-		return nil, err
+		return err
 	}
 
-	return userInfos, nil
+	nocobaseAuthPayload := &nocobaseAuthReq{
+		Account:  "admin@nocobase.com",
+		Password: "admin123",
+	}
+	nocobaseAuthPayloadJson, _ := json.Marshal(nocobaseAuthPayload)
+
+	req, _ := http.NewRequest("POST", nocobaseAuth, strings.NewReader(string(nocobaseAuthPayloadJson)))
+
+	req.Header.Add("Content-Type", "application/json")
+
+	authResponse, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer authResponse.Body.Close()
+	body, err := io.ReadAll(authResponse.Body)
+	if err != nil {
+		return err
+	}
+
+	authResp := new(nocobaseAuthResp)
+	err = json.Unmarshal(body, authResp)
+	if err != nil {
+		return err
+	}
+
+	token := "Bearer " + authResp.Data.Token
+
+	for _, r := range userInfos {
+		userInfoPayload := &nocobaseUserInfo{
+			Username: r.Mobile,
+			Email:    r.Email,
+			Phone:    r.Mobile,
+			Nickname: r.Name,
+			Name:     r.Name,
+			Userid:   r.Userid,
+			Unionid:  r.Unionid,
+			Password: r.Mobile,
+		}
+		nocobaseUserInfoPayloadJson, _ := json.Marshal(userInfoPayload)
+
+		req, _ := http.NewRequest("POST", nocobaseUserCreate, strings.NewReader(string(nocobaseUserInfoPayloadJson)))
+
+		req.Header.Add("Authorization", token)
+		req.Header.Add("Content-Type", "application/json")
+
+		_, err := http.DefaultClient.Do(req)
+		if err != nil {
+			// do nothing
+		}
+	}
+
+	return nil
 }
 
 // @Summary 退出登录

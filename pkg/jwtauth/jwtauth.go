@@ -48,7 +48,7 @@ type GinJWTMiddleware struct {
 
 	DingtalkAuthenticator func(c *gin.Context) (interface{}, error)
 
-	DingtalkFetchUsers func(c *gin.Context) (interface{}, error)
+	DingtalkCreateUsers func(c *gin.Context) error
 
 	// Callback function that should perform the authorization of the authenticated user. Called
 	// only after an authentication success. Must return true on success, false on failure.
@@ -545,12 +545,12 @@ func (mw *GinJWTMiddleware) DingtalkLoginCallback(c *gin.Context) {
 }
 
 func (mw *GinJWTMiddleware) FetchDingTalkUsers(c *gin.Context) {
-	data, err := mw.DingtalkFetchUsers(c)
+	err := mw.DingtalkCreateUsers(c)
 	if err != nil {
 		return
 	}
 
-	c.JSON(http.StatusOK, data)
+	c.JSON(http.StatusOK, nil)
 }
 
 func (mw *GinJWTMiddleware) signedString(token *jwt.Token) (string, error) {

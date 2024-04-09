@@ -17,7 +17,7 @@ func AuthInit() (*jwt.GinJWTMiddleware, error) {
 		IdentityHandler:       handler.IdentityHandler,
 		Authenticator:         handler.Authenticator,
 		DingtalkAuthenticator: handler.DingtalkAuthenticator,
-		DingtalkFetchUsers:    handler.DingtalkFetchUsers,
+		DingtalkCreateUsers:   handler.DingtalkCreateUsers,
 		Authorizator:          handler.Authorizator,
 		Unauthorized:          handler.Unauthorized,
 		TokenLookup:           "header: Authorization, query: token, cookie: jwt",

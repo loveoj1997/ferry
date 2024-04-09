@@ -41,6 +41,9 @@ type Result struct {
 const (
 	GetUserIDByUnionID = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
 	GetUserInfoByDept  = "https://oapi.dingtalk.com/topapi/v2/user/list"
+	NocobaseRoleAdmin  = 1
+	NocobaseRoleMember = 2
+	NocobaseRoleRoot   = 3
 )
 
 type GetUserIDByUnionIDReq struct {
@@ -54,7 +57,7 @@ type GetUserListByDeptReq struct {
 	DeptID             int  `json:"dept_id"`
 }
 
-type UserInfo struct {
+type DingtalkUserInfo struct {
 	Unionid string `json:"unionid"`
 	Userid  string `json:"userid"`
 	Email   string `json:"email"`
@@ -62,13 +65,37 @@ type UserInfo struct {
 	Name    string `json:"name"`
 }
 type GetUserListByDeptResp struct {
-	Errcode string `json:"errcode"`
+	Errcode int `json:"errcode"`
 	Result  struct {
-		NextCursor string     `json:"next_cursor"`
-		HasMore    string     `json:"has_more"`
-		List       []UserInfo `json:"list"`
+		NextCursor string             `json:"next_cursor"`
+		HasMore    bool               `json:"has_more"`
+		List       []DingtalkUserInfo `json:"list"`
 	} `json:"result"`
 	Errmsg string `json:"errmsg"`
+}
+
+type NocobaseUserInfo struct {
+	Avatar    string `json:"avatar"`
+	CreateBy  string `json:"createBy"`
+	CreatedAt string `json:"createdAt"`
+	DataScope string `json:"dataScope"`
+	DeletedAt string `json:"deletedAt"`
+	DeptID    int    `json:"deptId"`
+	Email     string `json:"email"`
+	NickName  string `json:"nickName"`
+	Params    string `json:"params"`
+	Password  string `json:"password"`
+	Phone     string `json:"phone"`
+	PostID    int    `json:"postId"`
+	Remark    string `json:"remark"`
+	RoleID    int    `json:"roleId"`
+	Salt      string `json:"salt"`
+	Sex       string `json:"sex"`
+	Status    string `json:"status"`
+	UpdateBy  string `json:"updateBy"`
+	UpdatedAt string `json:"updatedAt"`
+	UserID    int    `json:"userId"`
+	Username  string `json:"username"`
 }
 
 type GetUserIDByUnionIDRsp struct {
